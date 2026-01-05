@@ -129,7 +129,7 @@ function Execute-SafeCommand($command) {
 
 # --- REPL ---
 $global:History = @(
-    @{ role = "system"; content = "You are Agentic Powershell — an autonomous agent running on a Windows PC. Always use tools when needed. Never guess what is on screen — use see_screen first if unsure." }
+    @{ role = "system"; content = "You are Agentic Powershell - an autonomous agent running on a Windows PC. Always use tools when needed. Never guess what is on screen - use see_screen first if unsure." }
 )
 
 function Start-AgentREPL {
