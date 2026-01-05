@@ -137,6 +137,4 @@ function Start-AgentREPL {
 }
 
 Start-AgentREPL
-}
 
-Start-AgentREPL
