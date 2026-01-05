@@ -121,7 +121,11 @@ function Execute-SafeCommand($command) {
     Write-Host "[Shell] $command" -ForegroundColor Cyan
     try {
         $output = Invoke-Expression $command 2>&1 | Out-String
-        return if ($output.Trim()) { $output.Trim() } else { "Success." }
+        if ([string]::IsNullOrWhiteSpace($output)) {
+            return "Success."
+        } else {
+            return $output.Trim()
+        }
     } catch {
         return "Error: $($_.Exception.Message)"
     }
@@ -129,11 +133,11 @@ function Execute-SafeCommand($command) {
 
 # --- REPL ---
 $global:History = @(
-    @{ role = "system"; content = "You are Agentic Powershell - an autonomous agent running on a Windows PC. Always use tools when needed. Never guess what is on screen - use see_screen first if unsure." }
+    @{ role = "system"; content = "You are Sammy - an autonomous agent running on a Windows PC. Always use tools when needed. Never guess what is on screen - use see_screen first if unsure." }
 )
 
 function Start-AgentREPL {
-    Write-Host "`n=== Agentic Powershell REPL ===`nType 'exit' to quit, 'clear' to reset context.`n" -ForegroundColor Magenta
+    Write-Host "`n=== Sammy Agent REPL ===`nType 'exit' to quit, 'clear' to reset context.`n" -ForegroundColor Magenta
 
     while ($true) {
         $input = Read-Host "You"
@@ -164,7 +168,7 @@ function Start-AgentREPL {
             $global:History += $message
 
             if ($message.content) {
-                Write-Host "`n[AI] $($message.content)`n" -ForegroundColor Green
+                Write-Host "`n[Sammy] $($message.content)`n" -ForegroundColor Green
             }
 
             if ($message.tool_calls) {
@@ -190,7 +194,7 @@ function Start-AgentREPL {
                         content = $result
                     }
 
-                    Write-Host "[Tool → $($func.name)] $result`n" -ForegroundColor Yellow
+                    Write-Host "[Tool -> $($func.name)] $result`n" -ForegroundColor Yellow
                 }
             } else {
                 $thinking = $false
