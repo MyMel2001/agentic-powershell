@@ -7,15 +7,24 @@ $VISION_MODEL     = "ministral-3:14b-cloud"
 $OLLAMA_BASE      = "http://192.168.50.135:11434"
 
 # --- SAFETY SETTINGS ---
-$DANGEROUS_PATTERNS = @("rm ", "del ", "format ", "shutdown ", "Remove-Item", "Stop-Process", "Restart-Computer", "Set-Content", "Out-File")
+$DANGEROUS_PATTERNS = @("rm ", "del ", "format ", "Remove-Item", "Stop-Process", "Restart-Computer", "shutdown ")
 
 # --- GLOBAL MEMORY ---
 $global:ChatHistory = @(
-    @{ role = "system"; content = "You are an autonomous Windows Agent. You have vision, shell, and UI control. 1. Always use 'see_screen' to identify window titles before focusing. 2. Use 'execute_command' for system tasks. 3. Use 'take_action' for typing into focused windows." }
+    @{ role = "system"; content = "You are an autonomous Windows Agent. Use 'wait_timer' if you need to pause between actions. Use 'see_screen' to verify window states." }
 )
 
-# --- TOOLS IMPLEMENTATION ---
+# --- NEW TOOL: WAIT TIMER ---
+function Start-WaitTimer($seconds) {
+    Write-Host "[Timer] Waiting for $seconds seconds..." -ForegroundColor Yellow
+    for ($i = $seconds; $i -gt 0; $i--) {
+        Write-Progress -Activity "Agent is waiting..." -Status "$i seconds remaining" -PercentComplete (($i / $seconds) * 100)
+        Start-Sleep -Seconds 1
+    }
+    return "Wait completed."
+}
 
+# --- CORE TOOLS ---
 function Get-ScreenDescription {
     Write-Host "[Eyes] Analyzing screen..." -ForegroundColor Yellow
     $screen = [System.Windows.Forms.Screen]::PrimaryScreen.Bounds
@@ -27,85 +36,107 @@ function Get-ScreenDescription {
     $base64Image = [Convert]::ToBase64String($ms.ToArray())
     $graphics.Dispose(); $bmp.Dispose(); $ms.Dispose()
 
-    $body = @{ model = $VISION_MODEL; prompt = "Describe the open windows and their exact titles. What is Sammy looking at?"; stream = $false; images = @($base64Image) } | ConvertTo-Json
+    $body = @{ model = $VISION_MODEL; prompt = "What windows are open? List titles."; stream = $false; images = @($base64Image) } | ConvertTo-Json
     return (Invoke-RestMethod -Uri "$OLLAMA_BASE/api/generate" -Method Post -Body $body -ContentType "application/json").response
 }
 
 function Execute-SafeCommand($command) {
-    $isDangerous = $false
-    foreach ($p in $DANGEROUS_PATTERNS) { if ($command -like "*$p*") { $isDangerous = $true; break } }
-
-    if ($isDangerous) {
-        Write-Host "`n⚠️  SAFETY TRIGGERED: Agent wants to run: $command" -ForegroundColor Red
-        $choice = Read-Host "Allow? (y/n)"
-        if ($choice -ne "y") { return "User blocked this command for safety." }
+    foreach ($p in $DANGEROUS_PATTERNS) { 
+        if ($command -like "*$p*") { 
+            Write-Host "`n⚠️  SAFETY TRIGGERED: $command" -ForegroundColor Red
+            if ((Read-Host "Allow? (y/n)") -ne "y") { return "Blocked by user." }
+        } 
     }
-
-    Write-Host "[Shell] Executing: $command" -ForegroundColor Cyan
-    try { return (Invoke-Expression $command | Out-String) } 
-    catch { return "Error: $($_.Exception.Message)" }
+    Write-Host "[Shell] Running: $command" -ForegroundColor Cyan
+    try { return (Invoke-Expression $command | Out-String) } catch { return "Error: $($_.Exception.Message)" }
 }
 
-# --- TOOL DEFINITIONS FOR THE LLM ---
+# --- UPDATED TOOL DEFINITIONS ---
 $tools = @(
-    @{ type = "function"; function = @{ name = "see_screen"; description = "Takes a screenshot and describes windows." } },
+    @{ type = "function"; function = @{ name = "see_screen"; description = "Visual check of desktop." } },
     @{ 
         type = "function"; function = @{ 
-            name = "execute_command"; description = "Run PowerShell. Use for files, folders, and system info.";
-            parameters = @{ type = "object"; properties = @{ command = @{ type = "string" } }; required = @("command") }
+            name = "wait_timer"
+            description = "Pause execution for a set number of seconds."
+            parameters = @{ 
+                type = "object"
+                properties = @{ seconds = @{ type = "integer"; description = "Time to wait in seconds" } }
+                required = @("seconds")
+            }
         } 
     },
     @{ 
         type = "function"; function = @{ 
-            name = "focus_window"; description = "Focus an app by title.";
-            parameters = @{ type = "object"; properties = @{ title = @{ type = "string" } }; required = @("title") }
+            name = "execute_command"; description = "Run PowerShell commands.";
+            parameters = @{ 
+                type = "object"
+                properties = @{ command = @{ type = "string"; description = "Command string" } }
+                required = @("command")
+            }
         } 
     },
     @{ 
         type = "function"; function = @{ 
-            name = "take_action"; description = "Send keystrokes (e.g., 'Hello{ENTER}', '^s').";
-            parameters = @{ type = "object"; properties = @{ keys = @{ type = "string" } }; required = @("keys") }
+            name = "focus_window"; description = "Bring app to front.";
+            parameters = @{ 
+                type = "object"
+                properties = @{ title = @{ type = "string"; description = "Window title" } }
+                required = @("title")
+            }
+        } 
+    },
+    @{ 
+        type = "function"; function = @{ 
+            name = "take_action"; description = "Send keystrokes.";
+            parameters = @{ 
+                type = "object"
+                properties = @{ keys = @{ type = "string"; description = "Keys to type" } }
+                required = @("keys")
+            }
         } 
     }
 )
 
 # --- REPL ENGINE ---
 function Start-AgentREPL {
-    Write-Host "`n--- Sammy's AI Agent REPL ---" -ForegroundColor Blue
-    Write-Host "Commands: 'exit' to quit, 'clear' to reset memory." -ForegroundColor Gray
-
+    Write-Host "`n--- Sammy's AI REPL (With Timer) ---" -ForegroundColor Blue
     while ($true) {
         $userInput = Read-Host "`nREPL >"
         if ($userInput -eq "exit") { break }
-        if ($userInput -eq "clear") { $global:ChatHistory = $global:ChatHistory[0]; Write-Host "Memory Cleared."; continue }
+        if ($userInput -eq "clear") { $global:ChatHistory = $global:ChatHistory[0]; continue }
         
         $global:ChatHistory += @{ role = "user"; content = $userInput }
 
-        $thinking = $true
-        while ($thinking) {
-            $body = @{ model = $CONTROLLER_MODEL; messages = $global:ChatHistory; tools = $tools } | ConvertTo-Json -Depth 10
-            $resp = Invoke-RestMethod -Uri "$OLLAMA_BASE/v1/chat/completions" -Method Post -Body $body -ContentType "application/json"
-            $msg = $resp.choices[0].message
+        while ($true) {
+            $jsonBody = @{ model = $CONTROLLER_MODEL; messages = $global:ChatHistory; tools = $tools } | ConvertTo-Json -Depth 10
+            try {
+                $resp = Invoke-RestMethod -Uri "$OLLAMA_BASE/v1/chat/completions" -Method Post -Body $jsonBody -ContentType "application/json"
+                $msg = $resp.choices[0].message
+            } catch { break }
             
             if (-not $msg.tool_calls) {
                 Write-Host "`n[Agent]: $($msg.content)" -ForegroundColor Green
                 $global:ChatHistory += $msg
-                $thinking = $false
-            } else {
-                foreach ($tool in $msg.tool_calls) {
-                    $args = $tool.function.arguments | ConvertFrom-Json
-                    $output = switch ($tool.function.name) {
-                        "see_screen"      { Get-ScreenDescription }
-                        "execute_command" { Execute-SafeCommand -command $args.command }
-                        "focus_window"    { $WshShell.AppActivate($args.title); "Focused $args.title" }
-                        "take_action"     { [System.Windows.Forms.SendKeys]::SendWait($args.keys); "Keys sent." }
-                    }
-                    $global:ChatHistory += $msg
-                    $global:ChatHistory += @{ role = "tool"; tool_call_id = $tool.id; name = $tool.function.name; content = $output }
+                break
+            }
+
+            foreach ($tool in $msg.tool_calls) {
+                $args = $tool.function.arguments | ConvertFrom-Json
+                $output = switch ($tool.function.name) {
+                    "see_screen"      { Get-ScreenDescription }
+                    "wait_timer"      { Start-WaitTimer -seconds $args.seconds }
+                    "execute_command" { Execute-SafeCommand -command $args.command }
+                    "focus_window"    { $WshShell.AppActivate($args.title); "Focused" }
+                    "take_action"     { [System.Windows.Forms.SendKeys]::SendWait($args.keys); "Sent." }
                 }
+                $global:ChatHistory += $msg
+                $global:ChatHistory += @{ role = "tool"; tool_call_id = $tool.id; name = $tool.function.name; content = $output }
             }
         }
     }
+}
+
+Start-AgentREPL
 }
 
 Start-AgentREPL
