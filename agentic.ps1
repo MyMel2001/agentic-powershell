@@ -2,8 +2,8 @@ Add-Type -AssemblyName System.Windows.Forms, System.Drawing
 $WshShell = New-Object -ComObject WScript.Shell
 
 # --- CONFIG ---
-$CONTROLLER_MODEL = "gemma2:2b"           # any fast text model that supports tools
-$VISION_MODEL     = "llava:13b"           # or moondream, bakllava, llava-phi3, etc.
+$CONTROLLER_MODEL = "gemini-3-flash-preview:cloud"
+$VISION_MODEL     = "ministral-3:14b-cloud"
 $OLLAMA_BASE      = "http://192.168.50.135:11434"
 
 # --- SAFETY MANIFEST ---
